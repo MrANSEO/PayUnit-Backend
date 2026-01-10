@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PayUnit API - Node.js Integration</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .fade-in { animation: fadeIn 0.5s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .status-pending { background: #fef3c7; color: #92400e; }
+        .status-success { background: #d1fae5; color: #065f46; }
+        .status-failed { background: #fee2e2; color: #991b1b; }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Header -->
+    <header class="bg-gradient-to-r from-green-600 to-blue-600 text-white shadow-lg">
+        <div class="container mx-auto px-4 py-6">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <i class="fab fa-node-js text-4xl"></i>
+                    <div>
+                        <h1 class="text-2xl font-bold">PayUnit API - Node.js</h1>
+                        <p class="text-sm text-green-100">Intégration Express simple et rapide</p>
+                    </div>
+                </div>
+                <button onclick="loadTransactions()" class="bg-white text-green-600 px-4 py-2 rounded-lg hover:bg-green-50 transition">
+                    <i class="fas fa-sync-alt mr-2"></i>Actualiser
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <div class="container mx-auto px-4 py-8">
+        <!-- Stats Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+            <div class="bg-white rounded-lg shadow p-4">
+                <div class="flex items-center">
+                    <div class="bg-blue-100 rounded-full p-3 mr-4">
+                        <i class="fas fa-receipt text-blue-600 text-xl"></i>
+                    </div>
+                    <div>
+                        <p class="text-gray-600 text-sm">Transactions</p>
+                        <p class="text-2xl font-bold" id="totalTransactions">0</p>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-white rounded-lg shadow p-4">
+                <div class="flex items-center">
+                    <div class="bg-green-100 rounded-full p-3 mr-4">
+                        <i class="fas fa-check-circle text-green-600 text-xl"></i>
+                    </div>
+                    <div>
+                        <p class="text-gray-600 text-sm">Succès</p>
+                        <p class="text-2xl font-bold" id="successCount">0</p>
+                    </div>
+                </div>
+            </div>
+            <div class="bg-white rounded-lg shadow p-4">
+                <div class="flex items-center">
+                    <div class="bg-yellow-100 rounded-full p-3 mr-4">
+                        <i class="fas fa-clock text-yellow-600 text-xl"></i>
+                    </div>
+                    <div>
+                        <p class="text-gray-600 text-sm">En attente</p>
+                        <p class="text-2xl font-bold" id="pendingCount">0</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            
+            <!-- Payment Form -->
+            <div class="bg-white rounded-xl shadow-lg p-6 fade-in">
+                <h2 class="text-2xl font-bold text-gray-800 mb-6">
+                    <i class="fas fa-credit-card text-green-600 mr-2"></i>
+                    Nouveau Paiement
+                </h2>
+                
+                <form id="paymentForm" class="space-y-4">
+                    <!-- API Credentials -->
+                    <div class="bg-green-50 border-l-4 border-green-500 p-4 rounded">
+                        <h3 class="font-semibold text-green-900 mb-3">
+                            <i class="fas fa-key mr-2"></i>Identifiants API PayUnit
+                        </h3>
+                        <div class="space-y-3">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">API User</label>
+                                <input type="text" id="apiUser" required
+                                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                                       placeholder="Votre API User">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">API Password</label>
+                                <input type="password" id="apiPassword" required
+                                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                                       placeholder="Votre API Password">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">API Key</label>
+                                <input type="text" id="apiKey" required
+                                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                                       placeholder="sandbox_xxx ou live_xxx">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Mode</label>
+                                <select id="mode" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent">
+                                    <option value="sandbox">Sandbox (Test)</option>
+                                    <option value="live">Live (Production)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Payment Details -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                            <i class="fas fa-money-bill-wave mr-1"></i>Montant (XAF)
+                        </label>
+                        <input type="number" id="amount" required min="100"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                               placeholder="10000">
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Devise</label>
+                            <select id="currency" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent">
+                                <option value="XAF">XAF</option>
+                                <option value="XOF">XOF</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Pays</label>
+                            <select id="country" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent">
+                                <option value="CM">🇨🇲 Cameroun</option>
+                                <option value="SN">🇸🇳 Sénégal</option>
+                                <option value="CI">🇨🇮 Côte d'Ivoire</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <button type="submit" id="submitBtn"
+                            class="w-full bg-gradient-to-r from-green-600 to-blue-600 text-white font-semibold py-3 rounded-lg hover:from-green-700 hover:to-blue-700 transition transform hover:scale-105 shadow-lg">
+                        <i class="fas fa-paper-plane mr-2"></i>
+                        Initier le Paiement
+                    </button>
+                </form>
+
+                <!-- Result Display -->
+                <div id="result" class="mt-6 hidden"></div>
+            </div>
+
+            <!-- Transactions List -->
+            <div class="bg-white rounded-xl shadow-lg p-6 fade-in">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold text-gray-800">
+                        <i class="fas fa-list text-blue-600 mr-2"></i>
+                        Transactions
+                    </h2>
+                    <button onclick="clearTransactions()" class="text-red-600 hover:text-red-800 text-sm">
+                        <i class="fas fa-trash mr-1"></i>Effacer
+                    </button>
+                </div>
+                
+                <div id="transactions" class="space-y-3">
+                    <div class="text-center text-gray-500 py-8">
+                        <i class="fas fa-spinner fa-spin text-3xl mb-3"></i>
+                        <p>Chargement...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Documentation -->
+        <div class="mt-8 bg-white rounded-xl shadow-lg p-6 fade-in">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4">
+                <i class="fas fa-book text-purple-600 mr-2"></i>
+                Documentation & Ressources
+            </h2>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <a href="https://developer.payunit.net/fr" target="_blank" 
+                   class="flex items-center p-4 bg-blue-50 rounded-lg hover:bg-blue-100 transition">
+                    <i class="fas fa-book-open text-blue-600 text-2xl mr-3"></i>
+                    <div>
+                        <div class="font-semibold text-gray-800">API Docs</div>
+                        <div class="text-sm text-gray-600">Documentation</div>
+                    </div>
+                </a>
+                <a href="https://pu.payunit.net/dashboard/login" target="_blank"
+                   class="flex items-center p-4 bg-green-50 rounded-lg hover:bg-green-100 transition">
+                    <i class="fas fa-user-circle text-green-600 text-2xl mr-3"></i>
+                    <div>
+                        <div class="font-semibold text-gray-800">Dashboard</div>
+                        <div class="text-sm text-gray-600">Espace marchand</div>
+                    </div>
+                </a>
+                <a href="/health" target="_blank"
+                   class="flex items-center p-4 bg-yellow-50 rounded-lg hover:bg-yellow-100 transition">
+                    <i class="fas fa-heartbeat text-yellow-600 text-2xl mr-3"></i>
+                    <div>
+                        <div class="font-semibold text-gray-800">Health Check</div>
+                        <div class="text-sm text-gray-600">État du serveur</div>
+                    </div>
+                </a>
+                <a href="https://github.com/honojs/hono" target="_blank"
+                   class="flex items-center p-4 bg-purple-50 rounded-lg hover:bg-purple-100 transition">
+                    <i class="fab fa-node-js text-purple-600 text-2xl mr-3"></i>
+                    <div>
+                        <div class="font-semibold text-gray-800">Node.js</div>
+                        <div class="text-sm text-gray-600">Express Server</div>
+                    </div>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+    <script>
+        // Form submission
+        document.getElementById('paymentForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const submitBtn = document.getElementById('submitBtn');
+            const resultDiv = document.getElementById('result');
+            
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Traitement...';
+            
+            try {
+                const response = await axios.post('/api/payment/initialize', {
+                    total_amount: parseInt(document.getElementById('amount').value),
+                    currency: document.getElementById('currency').value,
+                    payment_country: document.getElementById('country').value,
+                    api_user: document.getElementById('apiUser').value,
+                    api_password: document.getElementById('apiPassword').value,
+                    api_key: document.getElementById('apiKey').value,
+                    mode: document.getElementById('mode').value
+                });
+                
+                if (response.data.status === 'SUCCESS' && response.data.data) {
+                    resultDiv.className = 'mt-6 bg-green-50 border-l-4 border-green-500 p-4 rounded';
+                    resultDiv.innerHTML = `
+                        <div class="flex items-start">
+                            <i class="fas fa-check-circle text-green-500 text-2xl mr-3 mt-1"></i>
+                            <div class="flex-1">
+                                <h3 class="font-semibold text-green-800 mb-2">✅ Paiement initialisé!</h3>
+                                <p class="text-sm text-green-700 mb-3">Transaction ID: <strong>${response.data.data.transaction_id}</strong></p>
+                                <a href="${response.data.data.transaction_url}" target="_blank"
+                                   class="inline-block bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 transition">
+                                    <i class="fas fa-external-link-alt mr-2"></i>Ouvrir PayUnit
+                                </a>
+                            </div>
+                        </div>
+                    `;
+                    resultDiv.classList.remove('hidden');
+                    
+                    setTimeout(loadTransactions, 1000);
+                    document.getElementById('amount').value = '';
+                } else {
+                    throw new Error(response.data.message || 'Échec');
+                }
+                
+            } catch (error) {
+                resultDiv.className = 'mt-6 bg-red-50 border-l-4 border-red-500 p-4 rounded';
+                resultDiv.innerHTML = `
+                    <div class="flex items-start">
+                        <i class="fas fa-times-circle text-red-500 text-2xl mr-3 mt-1"></i>
+                        <div>
+                            <h3 class="font-semibold text-red-800 mb-1">❌ Erreur</h3>
+                            <p class="text-sm text-red-700">${error.response?.data?.message || error.message}</p>
+                        </div>
+                    </div>
+                `;
+                resultDiv.classList.remove('hidden');
+            }
+            
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = '<i class="fas fa-paper-plane mr-2"></i>Initier le Paiement';
+        });
+
+        // Load transactions
+        async function loadTransactions() {
+            const transactionsDiv = document.getElementById('transactions');
+            
+            try {
+                const response = await axios.get('/api/transactions');
+                const { transactions, total } = response.data;
+                
+                // Update stats
+                document.getElementById('totalTransactions').textContent = total || 0;
+                document.getElementById('successCount').textContent = 
+                    transactions.filter(tx => tx.status === 'SUCCESS').length;
+                document.getElementById('pendingCount').textContent = 
+                    transactions.filter(tx => tx.status === 'PENDING').length;
+                
+                if (transactions.length === 0) {
+                    transactionsDiv.innerHTML = `
+                        <div class="text-center text-gray-500 py-8">
+                            <i class="fas fa-inbox text-4xl mb-3"></i>
+                            <p>Aucune transaction</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                transactionsDiv.innerHTML = transactions.map(tx => `
+                    <div class="border border-gray-200 rounded-lg p-4 hover:shadow-md transition">
+                        <div class="flex justify-between items-start mb-2">
+                            <div class="flex-1">
+                                <div class="font-semibold text-gray-800">${tx.transaction_id}</div>
+                                <div class="text-sm text-gray-600">${new Date(tx.created_at).toLocaleString('fr-FR')}</div>
+                            </div>
+                            <span class="status-${tx.status.toLowerCase()} px-3 py-1 rounded-full text-xs font-semibold">
+                                ${tx.status}
+                            </span>
+                        </div>
+                        <div class="flex justify-between items-center">
+                            <div class="text-lg font-bold text-gray-900">
+                                ${tx.total_amount.toLocaleString()} ${tx.currency}
+                            </div>
+                            <button onclick="checkStatus('${tx.transaction_id}')" 
+                                    class="text-blue-600 hover:text-blue-800 text-sm">
+                                <i class="fas fa-sync-alt mr-1"></i>Vérifier
+                            </button>
+                        </div>
+                    </div>
+                `).join('');
+                
+            } catch (error) {
+                transactionsDiv.innerHTML = `
+                    <div class="text-center text-red-500 py-8">
+                        <i class="fas fa-exclamation-triangle text-3xl mb-3"></i>
+                        <p>Erreur de chargement</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Check status
+        async function checkStatus(transactionId) {
+            try {
+                const response = await axios.get(`/api/payment/status/${transactionId}`);
+                alert(`Statut: ${response.data.status}\n\nMessage: ${response.data.message || 'N/A'}`);
+                loadTransactions();
+            } catch (error) {
+                alert('Erreur de vérification');
+            }
+        }
+
+        // Clear all transactions
+        async function clearTransactions() {
+            if (!confirm('Supprimer toutes les transactions ?')) return;
+            
+            try {
+                await axios.delete('/api/transactions');
+                loadTransactions();
+            } catch (error) {
+                alert('Erreur de suppression');
+            }
+        }
+
+        // Initial load
+        loadTransactions();
+        setInterval(loadTransactions, 30000);
+    </script>
+</body>
+</html>

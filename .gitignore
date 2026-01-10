@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+
+# Runtime
+*.log
+npm-debug.log*
+
+# PM2
+.pm2/
+pids/
+logs/
+
+# OS
+.DS_Store
+*.swp
+*.swo
+
+# IDE
+.vscode/
+.idea/
+
+# Backup
+*.backup
+*.bak
+*.tar.gz
+*.zip
