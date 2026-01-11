@@ -18,9 +18,14 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static('public'));
+app.use(express.json()); // Middleware supplémentaire
 
-// Configuration PayUnit
-const PAYUNIT_BASE_URL = 'https://gateway.payunit.net';
+// Configuration PayUnit depuis les variables d'environnement
+const PAYUNIT_BASE_URL = process.env.PAYUNIT_BASE_URL || 'https://gateway.payunit.net';
+const PAYUNIT_MODE = process.env.PAYUNIT_MODE || 'sandbox';
+const PAYUNIT_API_USER = process.env.PAYUNIT_API_USER;
+const PAYUNIT_API_PASSWORD = process.env.PAYUNIT_API_PASSWORD;
+const PAYUNIT_API_KEY = process.env.PAYUNIT_API_KEY;
 
 // Stockage en mémoire des transactions (en production, utiliser une vraie base de données)
 const transactions = [];
@@ -51,6 +56,19 @@ function findTransaction(transactionId) {
   return transactions.find(tx => tx.transaction_id === transactionId);
 }
 
+/**
+ * Valider les paramètres PayUnit
+ */
+function validatePayUnitCredentials(apiUser, apiPassword, apiKey) {
+  if (!apiUser || !apiPassword || !apiKey) {
+    return {
+      valid: false,
+      message: 'Credentials PayUnit manquants. Vérifiez vos variables d\'environnement ou paramètres.'
+    };
+  }
+  return { valid: true };
+}
+
 // ==========================================
 // API ROUTES - PAYUNIT INTEGRATION
 // ==========================================
@@ -65,19 +83,35 @@ app.post('/api/payment/initialize', async (req, res) => {
       total_amount,
       currency = 'XAF',
       payment_country = 'CM',
-      api_user,
-      api_password,
-      api_key,
-      mode = 'sandbox',
-      return_url,
-      notify_url
+      customer_phone,
+      payment_method
     } = req.body;
 
-    // Validation
-    if (!total_amount || !api_user || !api_password || !api_key) {
+    // ✅ CORRECTION: Vérifier UNIQUEMENT le montant
+    if (!total_amount) {
       return res.status(400).json({
-        error: 'Champs requis manquants',
-        required: ['total_amount', 'api_user', 'api_password', 'api_key']
+        status: 'FAILED',
+        error: 'Montant manquant',
+        message: 'Le champ total_amount est obligatoire'
+      });
+    }
+
+    // Validation des credentials
+    const credentialsCheck = validatePayUnitCredentials(PAYUNIT_API_USER, PAYUNIT_API_PASSWORD, PAYUNIT_API_KEY);
+    if (!credentialsCheck.valid) {
+      return res.status(500).json({
+        status: 'FAILED',
+        error: 'Credentials PayUnit invalides',
+        message: credentialsCheck.message
+      });
+    }
+
+    // Valider le montant
+    if (isNaN(total_amount) || parseInt(total_amount) <= 0) {
+      return res.status(400).json({
+        status: 'FAILED',
+        error: 'Montant invalide',
+        message: 'Le montant doit être un nombre positif'
       });
     }
 
@@ -92,16 +126,19 @@ app.post('/api/payment/initialize', async (req, res) => {
       total_amount: parseInt(total_amount),
       currency,
       transaction_id: transactionId,
-      return_url: return_url || `${baseUrl}/payment/return`,
-      notify_url: notify_url || `${baseUrl}/api/payment/notify`,
-      payment_country
+      return_url: `${baseUrl}/payment/return`,
+      notify_url: `${baseUrl}/api/payment/notify`,
+      payment_country,
+      customer_phone,
+      payment_method
     };
 
     console.log('📤 Initialisation paiement PayUnit:', {
       transaction_id: transactionId,
       amount: total_amount,
       currency,
-      mode
+      mode: PAYUNIT_MODE,
+      payment_country
     });
 
     // Appeler l'API PayUnit
@@ -110,11 +147,12 @@ app.post('/api/payment/initialize', async (req, res) => {
       payunitData,
       {
         headers: {
-          'x-api-key': api_key,
-          'mode': mode,
+          'x-api-key': PAYUNIT_API_KEY,
+          'mode': PAYUNIT_MODE,
           'Content-Type': 'application/json',
-          'Authorization': createBasicAuth(api_user, api_password)
-        }
+          'Authorization': createBasicAuth(PAYUNIT_API_USER, PAYUNIT_API_PASSWORD)
+        },
+        timeout: 10000
       }
     );
 
@@ -139,15 +177,25 @@ app.post('/api/payment/initialize', async (req, res) => {
     console.log('✅ Paiement initialisé avec succès:', transactionId);
 
     // Retourner la réponse
-    res.json(response.data);
+    res.json({
+      status: 'SUCCESS',
+      message: 'Paiement initialisé avec succès',
+      data: response.data.data,
+      transaction_id: transactionId
+    });
 
   } catch (error) {
     console.error('❌ Erreur initialisation paiement:', error.response?.data || error.message);
     
-    res.status(error.response?.status || 500).json({
+    const statusCode = error.response?.status || 500;
+    const errorMessage = error.response?.data?.message || error.message;
+
+    res.status(statusCode).json({
+      status: 'FAILED',
       error: 'Échec de l\'initialisation du paiement',
-      message: error.response?.data?.message || error.message,
-      details: error.response?.data || null
+      message: errorMessage,
+      details: error.response?.data || null,
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -176,8 +224,9 @@ app.post('/api/payment/notify', async (req, res) => {
 
       if (transaction) {
         // Mettre à jour le statut
-        transaction.status = data.transaction_status || status;
+        transaction.status = data.transaction_status || status || 'UNKNOWN';
         transaction.gateway = data.transaction_gateway || null;
+        transaction.gateway_reference = data.gateway_reference || null;
         transaction.message = message || data.message || null;
         transaction.updated_at = new Date().toISOString();
 
@@ -187,10 +236,11 @@ app.post('/api/payment/notify', async (req, res) => {
       }
     }
 
-    // Répondre à PayUnit
+    // Répondre à PayUnit avec succès
     res.json({
       status: 'SUCCESS',
-      message: 'Notification reçue et traitée'
+      message: 'Notification reçue et traitée',
+      timestamp: new Date().toISOString()
     });
 
   } catch (error) {
@@ -198,7 +248,8 @@ app.post('/api/payment/notify', async (req, res) => {
     
     res.status(500).json({
       error: 'Échec du traitement de la notification',
-      message: error.message
+      message: error.message,
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -211,16 +262,27 @@ app.get('/api/payment/status/:transaction_id', (req, res) => {
   try {
     const { transaction_id } = req.params;
     
+    if (!transaction_id) {
+      return res.status(400).json({
+        error: 'ID de transaction manquant',
+        message: 'Le paramètre transaction_id est obligatoire'
+      });
+    }
+
     const transaction = findTransaction(transaction_id);
 
     if (!transaction) {
       return res.status(404).json({
         error: 'Transaction non trouvée',
-        transaction_id
+        transaction_id,
+        message: `Aucune transaction trouvée avec l'ID: ${transaction_id}`
       });
     }
 
-    res.json(transaction);
+    res.json({
+      status: 'SUCCESS',
+      data: transaction
+    });
 
   } catch (error) {
     console.error('❌ Erreur vérification statut:', error.message);
@@ -244,6 +306,7 @@ app.get('/api/transactions', (req, res) => {
     );
 
     res.json({
+      status: 'SUCCESS',
       total: transactions.length,
       transactions: sortedTransactions
     });
@@ -269,6 +332,7 @@ app.delete('/api/transactions', (req, res) => {
   console.log(`🗑️  ${count} transaction(s) supprimée(s)`);
   
   res.json({
+    status: 'SUCCESS',
     message: `${count} transaction(s) supprimée(s)`,
     remaining: transactions.length
   });
@@ -305,9 +369,12 @@ app.get('/payment/return', (req, res) => {
 app.get('/health', (req, res) => {
   res.json({
     status: 'OK',
+    message: 'Serveur PayUnit API en bonne santé',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    transactions_count: transactions.length
+    transactions_count: transactions.length,
+    environment: process.env.NODE_ENV || 'development',
+    payunit_mode: PAYUNIT_MODE
   });
 });
 
@@ -319,7 +386,9 @@ app.get('/health', (req, res) => {
 app.use((req, res) => {
   res.status(404).json({
     error: 'Route non trouvée',
-    path: req.path
+    path: req.path,
+    method: req.method,
+    message: 'Vérifiez que l\'URL et la méthode HTTP sont correctes'
   });
 });
 
@@ -329,7 +398,8 @@ app.use((err, req, res, next) => {
   
   res.status(err.status || 500).json({
     error: 'Erreur serveur',
-    message: err.message
+    message: err.message,
+    timestamp: new Date().toISOString()
   });
 });
 
@@ -345,6 +415,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`   📡 Serveur démarré sur le port ${PORT}`);
   console.log(`   🌍 URL: http://localhost:${PORT}`);
   console.log(`   📚 Documentation: https://developer.payunit.net/fr`);
+  console.log(`   🔧 Mode: ${PAYUNIT_MODE}`);
   console.log('   ============================================');
   console.log('');
   console.log('   Endpoints disponibles:');
@@ -354,6 +425,11 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log('   - GET    /api/transactions');
   console.log('   - DELETE /api/transactions');
   console.log('   - GET    /health');
+  console.log('');
+  console.log('   Credentials PayUnit:');
+  console.log(`   - API User: ${PAYUNIT_API_USER ? '✅ Configuré' : '❌ Non configuré'}`);
+  console.log(`   - API Password: ${PAYUNIT_API_PASSWORD ? '✅ Configuré' : '❌ Non configuré'}`);
+  console.log(`   - API Key: ${PAYUNIT_API_KEY ? '✅ Configuré' : '❌ Non configuré'}`);
   console.log('');
   console.log('   Ctrl+C pour arrêter le serveur');
   console.log('============================================');
